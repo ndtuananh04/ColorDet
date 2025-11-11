@@ -206,7 +206,7 @@ def detect_wire_colors(frame, wires):
 
 def main():
     # Đọc ảnh
-    image_path = "nho.jpg"
+    image_path = "4.jpg"
     frame = cv2.imread(image_path)
     
     if frame is None:

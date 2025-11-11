@@ -1,0 +1,46 @@
+# Ảnh
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.bmp
+*.tiff
+*.webp
+
+# Virtual environment
+venv/
+env/
+ENV/
+.venv/
+
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Model files (nếu file model quá lớn)
+*.pth
+*.pt
+*.onnx
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+.env

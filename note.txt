@@ -1,0 +1,4 @@
+data1: data ảnh phần roi 
+
+cap_image: chụp data roi
+

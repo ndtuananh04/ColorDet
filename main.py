@@ -56,7 +56,7 @@ def detect_metal_connectors(frame):
     
     # Mở rộng bounding box về phía dây cắm (giả sử dây ở bên trái)
     # Thêm 60px về phía trái
-    extension = 80
+    extension = 100
     min_x = max(0, min_x - extension)
     max_x = min_x + 30
     # Có thể thêm một chút padding cho chiều cao
@@ -71,7 +71,7 @@ def detect_metal_connectors(frame):
 
 def main():
     # Đọc ảnh từ file
-    image_path = "4.jpg"  # Thay đổi đường dẫn ảnh của bạn
+    image_path = "data/5pin/3.jpg"  # Thay đổi đường dẫn ảnh của bạn
     frame = cv2.imread(image_path)
     
     if frame is None:

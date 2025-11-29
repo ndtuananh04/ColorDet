@@ -386,7 +386,7 @@ def main():
         # Real-time với camera
         print("\nReal-time checking")
         reference = input("Đường dẫn ảnh mẫu chuẩn: ").strip()
-        threshold = float(input("Threshold (mặc định 0.5): ").strip() or "0.5")
+        threshold = float(input("Threshold (mặc định 0.3): ").strip() or "0.3")
         
         run_realtime_checking(model, device, reference, threshold)
     

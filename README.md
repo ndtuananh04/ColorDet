@@ -1,8 +1,5 @@
 # Wire Connector Order Inspection System  
-<img src="https://img.shields.io/badge/python-3.8+-blue.svg" alt="Python 3.8+">
-<img src="https://img.shields.io/badge/PyTorch-2.0+-red.svg" alt="PyTorch">
-<img src="https://img.shields.io/badge/OpenCV-4.5+-green.svg" alt="OpenCV">
-<img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT">  
+<img src="https://img.shields.io/badge/python-3.8+-blue.svg" alt="Python 3.8+"><img src="https://img.shields.io/badge/PyTorch-2.0+-red.svg" alt="PyTorch"><img src="https://img.shields.io/badge/OpenCV-4.5+-green.svg" alt="OpenCV"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT">  
 
 Automated quality control system for wire connector inspection in manufacturing. Uses Siamese Neural Networks to compare connector images and detect defects or wrong types. 
 ## Key Features:  

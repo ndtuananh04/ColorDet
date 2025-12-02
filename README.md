@@ -1,5 +1,10 @@
-# Wire Connector Order Inspection System
-Automated quality control system for wire connector inspection in manufacturing. Uses Siamese Neural Networks to compare connector images and detect defects or wrong types.  
+# Wire Connector Order Inspection System  
+<img src="https://img.shields.io/badge/python-3.8+-blue.svg" alt="Python 3.8+">
+<img src="https://img.shields.io/badge/PyTorch-2.0+-red.svg" alt="PyTorch">
+<img src="https://img.shields.io/badge/OpenCV-4.5+-green.svg" alt="OpenCV">
+<img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT">  
+
+Automated quality control system for wire connector inspection in manufacturing. Uses Siamese Neural Networks to compare connector images and detect defects or wrong types. 
 ## Key Features:  
 - Real-time connector verification (30+ FPS)
 - Defect detection through similarity learning
@@ -43,3 +48,7 @@ Options:
 - Real-time camera - Live inspection with ROI
 # License
 MIT License - see LICENSE file for details.
+# Acknowledgments
+- MobileNetV2 - torchvision
+- Siamese Networks - Koch et al., 2015
+- OpenCV - Computer vision tools

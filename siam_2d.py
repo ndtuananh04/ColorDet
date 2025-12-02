@@ -8,6 +8,9 @@ from torch.utils.data import Dataset, DataLoader
 import os
 import random
 from sklearn.model_selection import train_test_split
+import torchvision.models as models
+import torchvision.transforms as transforms
+from PIL import Image
 
 # ======================
 # DATA AUGMENTATION
@@ -21,103 +24,87 @@ def augment_image(img):
         ksize = random.choice([3, 5])
         augmented = cv2.GaussianBlur(augmented, (ksize, ksize), 0)
     
-    # Random brightness
-    if random.random() > 0.5:
-        factor = random.uniform(0.8, 1.2)
-        augmented = np.clip(augmented * factor, 0, 255).astype(np.uint8)
-    
-    # Random shift (dịch chuyển nhỏ)
+    # Random shift
     if random.random() > 0.5:
         shift_x = random.randint(-5, 5)
         shift_y = random.randint(-5, 5)
         M = np.float32([[1, 0, shift_x], [0, 1, shift_y]])
         augmented = cv2.warpAffine(augmented, M, (augmented.shape[1], augmented.shape[0]))
     
-    # Random rotation (góc nhỏ)
+    # Random rotation
     if random.random() > 0.5:
-        angle = random.uniform(-5, 5)
+        angle = random.uniform(-10, 10)
         h, w = augmented.shape[:2]
         M = cv2.getRotationMatrix2D((w/2, h/2), angle, 1.0)
         augmented = cv2.warpAffine(augmented, M, (w, h))
     
     return augmented
 
-def preprocess_for_1dcnn(img, target_length=200, augment=True):
-    """
-    Preprocess ảnh thành input cho 1D CNN
-    - Resize về kích thước chuẩn
-    - Chuyển sang HSV
-    - Normalize
-    - Trung bình theo trục dọc để tạo 1D signal
-    """
-    if augment:
-        img = augment_image(img)
-    
-    # Resize về kích thước chuẩn (width=30, height=target_length)
-    resized = cv2.resize(img, (30, target_length))
-    
-    # Chuyển sang HSV color space
-    hsv = cv2.cvtColor(resized, cv2.COLOR_BGR2HSV)
-    
-    # Normalize về [0, 1]
-    norm = hsv.astype(np.float32) / 255.0
-    
-    # Lấy trung bình theo trục dọc (axis=0) để tạo 1D signal
-    # Shape: (40, target_length, 3) -> (target_length, 3)
-    avg_line = np.mean(norm, axis=0)
-    
-    # Transpose để có shape (3, target_length)
-    line_1d = avg_line.T
-    
-    return np.expand_dims(line_1d, axis=0)  # (1, 3, target_length)
+# PyTorch transforms for augmentation
+train_transform = transforms.Compose([
+    transforms.Resize((224, 224)),
+    transforms.RandomHorizontalFlip(p=0.3),
+    transforms.RandomRotation(10),
+    transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+])
+
+val_transform = transforms.Compose([
+    transforms.Resize((224, 224)),
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+])
 
 # ======================
 # DATASET
 # ======================
 class ConnectorDataset(Dataset):
-    def __init__(self, image_paths, labels, augment=True, aug_per_image=5):
-        """
-        image_paths: list các đường dẫn ảnh
-        labels: list các nhãn (connector type)
-        augment: có áp dụng augmentation không
-        aug_per_image: số lần augment mỗi ảnh
-        """
+    def __init__(self, image_paths, labels, transform=None, augment=False):
         self.image_paths = image_paths
         self.labels = labels
+        self.transform = transform
         self.augment = augment
-        self.aug_per_image = aug_per_image
         
-        # Load tất cả ảnh
-        self.images = []
-        self.valid_indices = []
+        # Lọc ảnh hợp lệ
+        self.valid_paths = []
+        self.valid_labels = []
         
-        print("Loading images...")
-        for idx, img_path in enumerate(image_paths):
-            img = cv2.imread(img_path)
-            if img is not None and img.size > 0:
-                self.images.append(img)
-                self.valid_indices.append(idx)
-            else:
-                print(f"⚠️ Cannot load: {img_path}")
+        print("Loading and validating images...")
+        for img_path, label in zip(image_paths, labels):
+            if os.path.exists(img_path):
+                img = cv2.imread(img_path)
+                if img is not None and img.size > 0:
+                    self.valid_paths.append(img_path)
+                    self.valid_labels.append(label)
+                else:
+                    print(f"⚠️ Cannot load: {img_path}")
         
-        print(f"✅ Loaded {len(self.images)} valid images from {len(image_paths)} total")
+        print(f"✅ Loaded {len(self.valid_paths)} valid images from {len(image_paths)} total")
         
     def __len__(self):
-        if self.augment:
-            return len(self.images) * self.aug_per_image
-        return len(self.images)
+        return len(self.valid_paths)
     
     def __getitem__(self, idx):
-        # Tìm ảnh gốc tương ứng
-        real_idx = idx % len(self.images)
-        img = self.images[real_idx]
-        label = self.labels[self.valid_indices[real_idx]]
+        img_path = self.valid_paths[idx]
+        label = self.valid_labels[idx]
         
-        # Preprocess với/không augment
-        tensor = preprocess_for_1dcnn(img, augment=self.augment)
-        tensor = torch.tensor(tensor).float().squeeze(0)  # (3, 250)
+        # Load ảnh
+        img = cv2.imread(img_path)
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         
-        return tensor, label
+        # Augment nếu cần
+        if self.augment:
+            img = augment_image(img)
+        
+        # Convert sang PIL
+        img = Image.fromarray(img)
+        
+        # Apply transform
+        if self.transform:
+            img = self.transform(img)
+        
+        return img, label
 
 def create_pairs_from_batch(batch_data, batch_labels):
     """Tạo cặp positive và negative từ batch"""
@@ -132,7 +119,6 @@ def create_pairs_from_batch(batch_data, batch_labels):
     for label in unique_labels:
         indices = (batch_labels == label).nonzero(as_tuple=True)[0]
         if len(indices) >= 2:
-            # Chọn tất cả các cặp cùng class
             for i in range(len(indices)):
                 for j in range(i + 1, len(indices)):
                     pairs_1.append(batch_data[indices[i]])
@@ -153,44 +139,40 @@ def create_pairs_from_batch(batch_data, batch_labels):
     return torch.stack(pairs_1), torch.stack(pairs_2), torch.tensor(labels).float()
 
 # ======================
-# SIAMESE NETWORK
+# SIAMESE NETWORK WITH MOBILENETV2
 # ======================
-class Siamese1DNet(nn.Module):
-    def __init__(self):
+class SiameseMobileNet(nn.Module):
+    def __init__(self, embedding_dim=128, pretrained=True):
         super().__init__()
-        # Shared CNN để extract features
-        self.conv = nn.Sequential(
-            # Layer 1
-            nn.Conv1d(3, 32, kernel_size=5, padding=2),
-            nn.BatchNorm1d(32),
-            nn.ReLU(),
-            nn.MaxPool1d(2),
-            nn.Dropout(0.2),
-
-            # Layer 2
-            nn.Conv1d(32, 64, kernel_size=5, padding=2),
-            nn.BatchNorm1d(64),
-            nn.ReLU(),
-            nn.MaxPool1d(2),
-            nn.Dropout(0.2),
-
-            # Layer 3
-            nn.Conv1d(64, 128, kernel_size=5, padding=2),
-            nn.BatchNorm1d(128),
-            nn.ReLU(),
-            nn.AdaptiveAvgPool1d(8),
-            
-            # Fully connected
-            nn.Flatten(),
-            nn.Linear(128 * 8, 256),
+        
+        # Load pretrained MobileNetV2
+        mobilenet = models.mobilenet_v2(pretrained=pretrained)
+        
+        # Lấy features extractor (bỏ classifier)
+        self.backbone = mobilenet.features
+        
+        # Freeze một số layers đầu (optional - có thể bỏ comment để freeze)
+        # for param in list(self.backbone.parameters())[:-10]:
+        #     param.requires_grad = False
+        
+        # Global average pooling
+        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+        
+        # Custom embedding layer (MobileNetV2 output: 1280)
+        self.embedding = nn.Sequential(
+            nn.Linear(1280, 256),
             nn.ReLU(),
             nn.Dropout(0.3),
-            nn.Linear(256, 128),  # Embedding dimension = 128
+            nn.Linear(256, embedding_dim)
         )
 
     def forward_once(self, x):
         """Extract embedding từ một ảnh"""
-        return self.conv(x)
+        x = self.backbone(x)
+        x = self.avgpool(x)
+        x = x.view(x.size(0), -1)  # Flatten
+        x = self.embedding(x)
+        return x
 
     def forward(self, x1, x2):
         """Tính khoảng cách giữa 2 ảnh"""
@@ -207,28 +189,30 @@ class ContrastiveLoss(nn.Module):
         self.margin = margin
     
     def forward(self, distances, labels):
-        """
-        distances: khoảng cách giữa các cặp
-        labels: 0 = same, 1 = different
-        """
-        # Loss cho cặp cùng class: muốn distance nhỏ
+        # labels: 0 = same, 1 = different
         loss_same = (1 - labels) * torch.pow(distances, 2)
-        
-        # Loss cho cặp khác class: muốn distance > margin
         loss_diff = labels * torch.pow(torch.clamp(self.margin - distances, min=0.0), 2)
-        
         return torch.mean(loss_same + loss_diff)
 
 # ======================
 # TRAINING
 # ======================
-def train_model(train_loader, val_loader, epochs=50, lr=0.001, save_path='siamese_model.pth'):
+def train_model(train_loader, val_loader, epochs=50, lr=0.001, save_path='siamese_mobilenet_model.pth'):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"🔥 Using device: {device}")
     
-    model = Siamese1DNet().to(device)
+    # Khởi tạo model với pretrained weights
+    model = SiameseMobileNet(embedding_dim=128, pretrained=True).to(device)
+    print("✅ Loaded pretrained MobileNetV2 weights")
+    
     criterion = ContrastiveLoss(margin=1.5)
-    optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=1e-5)
+    
+    # Learning rate khác nhau cho backbone và embedding
+    optimizer = optim.Adam([
+        {'params': model.backbone.parameters(), 'lr': lr * 0.1},  # Backbone: lr thấp hơn
+        {'params': model.embedding.parameters(), 'lr': lr}        # Embedding: lr cao hơn
+    ], weight_decay=1e-5)
+    
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5)
     
     best_val_loss = float('inf')
@@ -253,12 +237,9 @@ def train_model(train_loader, val_loader, epochs=50, lr=0.001, save_path='siames
             pairs_2 = pairs_2.to(device)
             pair_labels = pair_labels.to(device)
             
-            # Forward pass
             optimizer.zero_grad()
             distances = model(pairs_1, pairs_2)
             loss = criterion(distances, pair_labels)
-            
-            # Backward pass
             loss.backward()
             optimizer.step()
             
@@ -314,14 +295,11 @@ def train_model(train_loader, val_loader, epochs=50, lr=0.001, save_path='siames
 # MAIN
 # ======================
 def main():
-
-    
     # ========== CẤU HÌNH ==========
-    data_dir = "data2"  # Thay đổi đường dẫn của bạn
+    data_dir = "chamber"
     batch_size = 16
-    epochs = 40
+    epochs = 50
     learning_rate = 0.001
-    aug_per_image = 10  # Số lần augment mỗi ảnh trong training
     
     # ========== LOAD DATASET ==========
     print("📂 Loading dataset...")
@@ -360,10 +338,12 @@ def main():
     print("\n🔄 Creating datasets...")
     train_dataset = ConnectorDataset(
         train_paths, train_labels, 
+        transform=train_transform,
         augment=True
     )
     val_dataset = ConnectorDataset(
         val_paths, val_labels, 
+        transform=val_transform,
         augment=False
     )
     
@@ -371,16 +351,16 @@ def main():
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=2)
     
     # ========== TRAIN ==========
-    print("\n🚀 Starting training...")
+    print("\n🚀 Starting training with pretrained ResNet18...")
     model = train_model(train_loader, val_loader, epochs=epochs, lr=learning_rate)
     
     print("\n✅ Training completed!")
-    print(f"✅ Model saved to 'siamese_model.pth'")
-    print(f"\n💡 Để sử dụng model:")
-    print(f"   1. Load model: model.load_state_dict(torch.load('siamese_model.pth')['model_state_dict'])")
-    print(f"   2. Preprocess ảnh: preprocess_for_1dcnn(image)")
-    print(f"   3. So sánh: distance = model(img1, img2)")
-    print(f"   4. Threshold: distance < 0.5 => same class")
+    print(f"✅ Model saved to 'siamese_resnet_model.pth'")
+    print(f"\n💡 Ưu điểm của Transfer Learning:")
+    print(f"   ✓ Học nhanh hơn với ít data")
+    print(f"   ✓ Pretrained weights từ ImageNet giúp extract features tốt hơn")
+    print(f"   ✓ Tránh overfitting khi data ít")
+    print(f"   ✓ Accuracy cao hơn so với train from scratch")
 
 if __name__ == "__main__":
     main()

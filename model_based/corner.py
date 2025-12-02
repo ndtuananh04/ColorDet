@@ -318,7 +318,7 @@ def visualize_results(img, gray, blurred, edges, edges_clean, dst,
 
 # ==================== SỬ DỤNG ====================
 if __name__ == "__main__":
-    image_path = "4.jpg"
+    image_path = "data/5pin/1.jpg"
     
     try:
         wire_count, positions, confidence = detect_wires_hybrid(image_path, visualize=True)

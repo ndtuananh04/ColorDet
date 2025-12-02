@@ -7,31 +7,42 @@ from datetime import datetime
 # ROI SELECTOR
 # ======================
 class ROISelector:
-    """Class để vẽ ROI bằng chuột"""
-    def __init__(self):
-        self.drawing = False
-        self.start_point = None
-        self.roi = None
+    """Class để di chuyển ROI cố định với kích thước tùy chỉnh"""
+    def __init__(self, roi_width=30, roi_height=180):
+        self.roi_width = roi_width
+        self.roi_height = roi_height
+        self.roi_x = 0
+        self.roi_y = 0
+        self.dragging = False
+        self.offset_x = 0
+        self.offset_y = 0
         
     def mouse_callback(self, event, x, y, flags, param):
         if event == cv2.EVENT_LBUTTONDOWN:
-            self.drawing = True
-            self.start_point = (x, y)
+            # Kiểm tra xem click có trong ROI không
+            if (self.roi_x <= x <= self.roi_x + self.roi_width and 
+                self.roi_y <= y <= self.roi_y + self.roi_height):
+                self.dragging = True
+                self.offset_x = x - self.roi_x
+                self.offset_y = y - self.roi_y
         
         elif event == cv2.EVENT_MOUSEMOVE:
-            if self.drawing:
-                param['current_point'] = (x, y)
+            if self.dragging:
+                # Di chuyển ROI theo chuột
+                self.roi_x = x - self.offset_x
+                self.roi_y = y - self.offset_y
         
         elif event == cv2.EVENT_LBUTTONUP:
-            self.drawing = False
-            self.roi = (
-                min(self.start_point[0], x),
-                min(self.start_point[1], y),
-                abs(x - self.start_point[0]),
-                abs(y - self.start_point[1])
-            )
-            param['roi_set'] = True
-            print(f"✅ ROI: {self.roi}")
+            self.dragging = False
+    
+    def get_roi(self):
+        """Trả về ROI dạng (x, y, w, h)"""
+        return (self.roi_x, self.roi_y, self.roi_width, self.roi_height)
+    
+    def clamp_roi(self, frame_width, frame_height):
+        """Giới hạn ROI trong frame"""
+        self.roi_x = max(0, min(self.roi_x, frame_width - self.roi_width))
+        self.roi_y = max(0, min(self.roi_y, frame_height - self.roi_height))
 
 def crop_roi_region(image, roi):
     """Crop ảnh theo ROI"""
@@ -50,12 +61,72 @@ def crop_roi_region(image, roi):
     return image[y:y+h, x:x+w]
 
 # ======================
+# INPUT ROI SIZE
+# ======================
+def input_roi_size():
+    """
+    Nhập kích thước ROI từ người dùng
+    Returns: (width, height) tuple
+    """
+    print("\n" + "="*60)
+    print("⚙️  CÀI ĐẶT KÍCH THƯỚC ROI")
+    print("="*60)
+    
+    while True:
+        try:
+            print("\n📏 Nhập kích thước ROI (pixels):")
+            print("   Gợi ý: 30x180 (dọc), 250x30 (ngang)")
+            
+            width_input = input("   Width (chiều rộng): ").strip()
+            if not width_input:
+                width = 30  # Default
+                print(f"   → Sử dụng giá trị mặc định: {width}px")
+            else:
+                width = int(width_input)
+            
+            height_input = input("   Height (chiều cao): ").strip()
+            if not height_input:
+                height = 180  # Default
+                print(f"   → Sử dụng giá trị mặc định: {height}px")
+            else:
+                height = int(height_input)
+            
+            # Kiểm tra giá trị hợp lệ
+            if width <= 0 or height <= 0:
+                print("❌ Kích thước phải lớn hơn 0!")
+                continue
+            
+            if width > 1920 or height > 1080:
+                print("⚠️  Cảnh báo: Kích thước quá lớn (tối đa 1920x1080)")
+                confirm = input("   Tiếp tục? (y/n): ").strip().lower()
+                if confirm != 'y':
+                    continue
+            
+            # Xác nhận
+            print("\n" + "="*60)
+            print(f"✅ Kích thước ROI: {width}x{height} pixels")
+            print(f"   Diện tích: {width * height} pixels²")
+            print("="*60)
+            
+            confirm = input("\nXác nhận kích thước này? (y/n): ").strip().lower()
+            if confirm == 'y':
+                return width, height
+            else:
+                print("🔄 Nhập lại...")
+                
+        except ValueError:
+            print("❌ Vui lòng nhập số nguyên hợp lệ!")
+        except KeyboardInterrupt:
+            print("\n\n⚠️  Đã hủy!")
+            return None, None
+
+# ======================
 # DATA COLLECTION
 # ======================
-def collect_data(output_folder='data', class_name=None):
+def collect_data(output_folder='data', class_name=None, roi_width=30, roi_height=180):
     """
-    Thu thập ảnh data với ROI
-    - Vẽ ROI trên camera
+    Thu thập ảnh data với ROI cố định
+    - Di chuyển ROI bằng cách kéo thả
     - Chụp và lưu ảnh vào thư mục class
     """
     # Tạo thư mục output
@@ -82,13 +153,13 @@ def collect_data(output_folder='data', class_name=None):
     print("="*60)
     print(f"📁 Class: {class_name}")
     print(f"📊 Số ảnh hiện có: {image_count}")
+    print(f"📏 ROI size: {roi_width}x{roi_height} pixels (cố định)")
     print("="*60)
     print("📍 HƯỚNG DẪN:")
-    print("  1. Kéo chuột để vẽ ROI")
-    print("  2. Nhấn ENTER để xác nhận ROI")
-    print("  3. Nhấn SPACE để chụp ảnh")
-    print("  4. Nhấn 'r' để vẽ lại ROI")
-    print("  5. Nhấn 'q' để thoát")
+    print("  1. Kéo thả ROI (hình chữ nhật xanh) để di chuyển")
+    print("  2. Nhấn SPACE để chụp ảnh")
+    print("  3. Nhấn 'e' để điều chỉnh exposure")
+    print("  4. Nhấn 'q' để thoát")
     print("="*60 + "\n")
     
     # Mở camera
@@ -98,18 +169,43 @@ def collect_data(output_folder='data', class_name=None):
         print("❌ Không thể mở camera!")
         return
     
-    # Setup ROI selector
-    roi_selector = ROISelector()
-    window_name = 'Data Collection - Draw ROI'
+    # Đọc frame đầu tiên để lấy kích thước
+    ret, first_frame = cap.read()
+    if not ret:
+        print("❌ Không thể đọc frame từ camera!")
+        cap.release()
+        return
+    
+    frame_height, frame_width = first_frame.shape[:2]
+    
+    # Kiểm tra ROI có vừa với frame không
+    if roi_width > frame_width or roi_height > frame_height:
+        print(f"❌ ROI ({roi_width}x{roi_height}) lớn hơn frame ({frame_width}x{frame_height})!")
+        cap.release()
+        return
+    
+    # ============ HỎI ĐIỀU CHỈNH EXPOSURE ============
+    print("\n📸 Bạn có muốn điều chỉnh exposure không?")
+    adjust_choice = input("   (y/n) [n]: ").strip().lower()
+    if adjust_choice == 'y':
+        adjust_camera_exposure(cap)
+    # ================================================
+    
+    # Setup ROI selector với kích thước tùy chỉnh
+    roi_selector = ROISelector(roi_width=roi_width, roi_height=roi_height)
+    
+    # Đặt ROI ở giữa màn hình
+    roi_selector.roi_x = (frame_width - roi_width) // 2
+    roi_selector.roi_y = (frame_height - roi_height) // 2
+    
+    window_name = 'Data Collection - Move ROI'
     cv2.namedWindow(window_name)
+    cv2.setMouseCallback(window_name, roi_selector.mouse_callback)
     
-    param = {'current_point': None, 'roi_set': False}
-    cv2.setMouseCallback(window_name, roi_selector.mouse_callback, param)
-    
-    roi_confirmed = False
     captured_count = 0
     
-    print("🎯 Vẽ ROI trên camera...")
+    print(f"🎯 ROI cố định: {roi_width}x{roi_height} pixels")
+    print("📸 Kéo thả ROI để điều chỉnh vị trí, sau đó nhấn SPACE để chụp...")
     
     while True:
         ret, frame = cap.read()
@@ -118,26 +214,34 @@ def collect_data(output_folder='data', class_name=None):
         
         display = frame.copy()
         
-        # Vẽ ROI đang được kéo
-        if roi_selector.drawing and roi_selector.start_point and param['current_point']:
-            cv2.rectangle(display, roi_selector.start_point, param['current_point'], (0, 255, 0), 2)
+        # Giới hạn ROI trong frame
+        roi_selector.clamp_roi(frame_width, frame_height)
         
-        # Vẽ ROI đã hoàn thành
-        if roi_selector.roi:
-            x, y, w, h = roi_selector.roi
-            cv2.rectangle(display, (x, y), (x+w, y+h), (0, 255, 0), 2)
-            
-            if not roi_confirmed:
-                cv2.putText(display, "Press ENTER to confirm ROI", (10, 30),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-            else:
-                cv2.putText(display, "Press SPACE to capture", (10, 30),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-                cv2.putText(display, f"Captured: {captured_count}", (10, 60),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+        # Lấy vị trí ROI hiện tại
+        x, y, w, h = roi_selector.get_roi()
+        
+        # Vẽ ROI
+        if roi_selector.dragging:
+            # Màu vàng khi đang kéo
+            cv2.rectangle(display, (x, y), (x+w, y+h), (0, 255, 255), 2)
         else:
-            cv2.putText(display, "Draw ROI by dragging mouse", (10, 30),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
+            # Màu xanh lá khi không kéo
+            cv2.rectangle(display, (x, y), (x+w, y+h), (0, 255, 0), 2)
+        
+        # Vẽ tâm ROI
+        center_x = x + w // 2
+        center_y = y + h // 2
+        cv2.circle(display, (center_x, center_y), 5, (0, 0, 255), -1)
+        
+        # Hiển thị kích thước ROI
+        cv2.putText(display, f"ROI: {w}x{h}px", (x, y-10),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+        
+        # Hiển thị hướng dẫn
+        cv2.putText(display, "Drag: Move | SPACE: Capture | E: Exposure | Q: Quit", (10, 30),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+        cv2.putText(display, f"Captured: {captured_count}", (10, 60),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
         
         # Thông tin thêm
         cv2.putText(display, f"Class: {class_name}", (10, display.shape[0] - 40),
@@ -149,16 +253,10 @@ def collect_data(output_folder='data', class_name=None):
         
         key = cv2.waitKey(1) & 0xFF
         
-        # ENTER - Xác nhận ROI
-        if key == 13 and roi_selector.roi and not roi_confirmed:
-            roi_confirmed = True
-            print(f"✅ ROI đã được xác nhận: {roi_selector.roi}")
-            print("📸 Nhấn SPACE để chụp ảnh...")
-        
         # SPACE - Chụp ảnh
-        elif key == 32 and roi_confirmed:  # SPACE
+        if key == 32:  # SPACE
             # Crop ROI
-            cropped = crop_roi_region(frame, roi_selector.roi)
+            cropped = crop_roi_region(frame, roi_selector.get_roi())
             
             if cropped is not None:
                 # Tạo tên file với timestamp
@@ -169,7 +267,7 @@ def collect_data(output_folder='data', class_name=None):
                 # Lưu ảnh đã crop
                 cv2.imwrite(filepath, cropped)
                 captured_count += 1
-                print(f"✅ Đã lưu: {filename}")
+                print(f"✅ Đã lưu: {filename} - Shape: {cropped.shape}")
                 
                 # Hiệu ứng chụp (flash)
                 flash = np.ones_like(display) * 255
@@ -178,13 +276,10 @@ def collect_data(output_folder='data', class_name=None):
             else:
                 print("❌ Không thể crop ROI!")
         
-        # r - Vẽ lại ROI
-        elif key == ord('r'):
-            roi_selector.roi = None
-            roi_confirmed = False
-            param['current_point'] = None
-            param['roi_set'] = False
-            print("🔄 Vẽ lại ROI...")
+        # e - Điều chỉnh exposure
+        elif key == ord('e'):
+            print("\n📸 Điều chỉnh exposure...")
+            adjust_camera_exposure(cap)
         
         # q - Thoát
         elif key == ord('q'):
@@ -199,7 +294,74 @@ def collect_data(output_folder='data', class_name=None):
     print(f"✅ Đã chụp: {captured_count} ảnh")
     print(f"📁 Tổng số ảnh trong {class_name}: {image_count + captured_count}")
     print(f"📂 Lưu tại: {class_folder}")
+    print(f"📏 Kích thước ảnh: {roi_width}x{roi_height} pixels")
     print("="*60 + "\n")
+
+def adjust_camera_exposure(cap):
+    """Điều chỉnh exposure của camera"""
+    print("\n⚙️  ĐIỀU CHỈNH EXPOSURE")
+    
+    # Set manual mode
+    cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 1)
+    
+    # Lấy exposure hiện tại
+    current_exp = int(cap.get(cv2.CAP_PROP_EXPOSURE))
+    
+    # Thử set range và đọc lại
+    cap.set(cv2.CAP_PROP_EXPOSURE, -6)
+    test_exp = int(cap.get(cv2.CAP_PROP_EXPOSURE))
+    
+    # Xác định range dựa trên camera
+    if test_exp < 0:
+        min_exp, max_exp = -13, -1  # Camera hỗ trợ âm
+    else:
+        min_exp, max_exp = 1, 2000  # Camera dùng giá trị dương
+        if current_exp == 0:
+            current_exp = 100
+    
+    cap.set(cv2.CAP_PROP_EXPOSURE, current_exp)
+    
+    window = 'Adjust Exposure'
+    cv2.namedWindow(window)
+    
+    def on_change(val):
+        # Chuyển đổi từ 0-100 sang min_exp-max_exp
+        exp = int(min_exp + (val / 100.0) * (max_exp - min_exp))
+        cap.set(cv2.CAP_PROP_EXPOSURE, exp)
+    
+    # Trackbar từ 0-100%
+    initial_val = int(((current_exp - min_exp) / (max_exp - min_exp)) * 100)
+    cv2.createTrackbar('Exposure (%)', window, initial_val, 100, on_change)
+    
+    print("📍 Di chuyển trackbar | ENTER: Xác nhận | ESC: Hủy")
+    
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+        
+        exp = int(cap.get(cv2.CAP_PROP_EXPOSURE))
+        display = frame.copy()
+        
+        cv2.putText(display, f"Exposure: {exp}", (20, 50),
+                   cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 3)
+        cv2.putText(display, f"Range: {min_exp} to {max_exp}", (20, 90),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+        cv2.putText(display, "ENTER: Confirm | ESC: Cancel", (20, 130),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+        
+        cv2.imshow(window, display)
+        
+        key = cv2.waitKey(1) & 0xFF
+        if key == 13:  # ENTER
+            print(f"✅ Exposure: {exp}")
+            break
+        elif key == 27:  # ESC
+            cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 3)
+            print("⚠️ Hủy - Auto exposure")
+            break
+    
+    cv2.destroyWindow(window)
 
 # ======================
 # MAIN
@@ -214,23 +376,32 @@ def main():
     if not output_folder:
         output_folder = 'data'
     
+    # Nhập kích thước ROI
+    roi_width, roi_height = input_roi_size()
+    if roi_width is None or roi_height is None:
+        print("❌ Đã hủy!")
+        return
+    
     while True:
         print("\n" + "="*60)
         print("MENU")
         print("="*60)
+        print(f"📏 ROI hiện tại: {roi_width}x{roi_height} pixels")
+        print("="*60)
         print("1. Thu thập data cho class mới")
         print("2. Thu thập thêm data cho class đã có")
         print("3. Xem danh sách classes")
-        print("4. Thoát")
+        print("4. Thay đổi kích thước ROI")
+        print("5. Thoát")
         print("="*60)
         
-        choice = input("Nhập lựa chọn (1/2/3/4): ").strip()
+        choice = input("Nhập lựa chọn (1/2/3/4/5): ").strip()
         
         if choice == "1":
             # Thu thập cho class mới
             class_name = input("Nhập tên class mới: ").strip()
             if class_name:
-                collect_data(output_folder, class_name)
+                collect_data(output_folder, class_name, roi_width, roi_height)
             else:
                 print("⚠️ Tên class không hợp lệ!")
         
@@ -250,7 +421,7 @@ def main():
                     
                     class_name = input("\nNhập tên class: ").strip()
                     if class_name in existing_classes:
-                        collect_data(output_folder, class_name)
+                        collect_data(output_folder, class_name, roi_width, roi_height)
                     else:
                         print("⚠️ Class không tồn tại!")
                 else:
@@ -284,6 +455,13 @@ def main():
                 print("⚠️ Thư mục data chưa tồn tại!")
         
         elif choice == "4":
+            # Thay đổi kích thước ROI
+            new_width, new_height = input_roi_size()
+            if new_width is not None and new_height is not None:
+                roi_width, roi_height = new_width, new_height
+                print(f"✅ Đã cập nhật ROI: {roi_width}x{roi_height} pixels")
+        
+        elif choice == "5":
             print("\n👋 Tạm biệt!")
             break
         

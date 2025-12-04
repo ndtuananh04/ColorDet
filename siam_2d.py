@@ -11,6 +11,7 @@ from sklearn.model_selection import train_test_split
 import torchvision.models as models
 import torchvision.transforms as transforms
 from PIL import Image
+from model_2d import SiameseMobileNet, ContrastiveLoss
 
 # ======================
 # DATA AUGMENTATION
@@ -139,62 +140,6 @@ def create_pairs_from_batch(batch_data, batch_labels):
     return torch.stack(pairs_1), torch.stack(pairs_2), torch.tensor(labels).float()
 
 # ======================
-# SIAMESE NETWORK WITH MOBILENETV2
-# ======================
-class SiameseMobileNet(nn.Module):
-    def __init__(self, embedding_dim=128, pretrained=True):
-        super().__init__()
-        
-        # Load pretrained MobileNetV2
-        mobilenet = models.mobilenet_v2(pretrained=pretrained)
-        
-        # Lấy features extractor (bỏ classifier)
-        self.backbone = mobilenet.features
-        
-        # Freeze một số layers đầu (optional - có thể bỏ comment để freeze)
-        # for param in list(self.backbone.parameters())[:-10]:
-        #     param.requires_grad = False
-        
-        # Global average pooling
-        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
-        
-        # Custom embedding layer (MobileNetV2 output: 1280)
-        self.embedding = nn.Sequential(
-            nn.Linear(1280, 256),
-            nn.ReLU(),
-            nn.Dropout(0.3),
-            nn.Linear(256, embedding_dim)
-        )
-
-    def forward_once(self, x):
-        """Extract embedding từ một ảnh"""
-        x = self.backbone(x)
-        x = self.avgpool(x)
-        x = x.view(x.size(0), -1)  # Flatten
-        x = self.embedding(x)
-        return x
-
-    def forward(self, x1, x2):
-        """Tính khoảng cách giữa 2 ảnh"""
-        e1 = self.forward_once(x1)
-        e2 = self.forward_once(x2)
-        return F.pairwise_distance(e1, e2)
-
-# ======================
-# CONTRASTIVE LOSS
-# ======================
-class ContrastiveLoss(nn.Module):
-    def __init__(self, margin=1.0):
-        super().__init__()
-        self.margin = margin
-    
-    def forward(self, distances, labels):
-        # labels: 0 = same, 1 = different
-        loss_same = (1 - labels) * torch.pow(distances, 2)
-        loss_diff = labels * torch.pow(torch.clamp(self.margin - distances, min=0.0), 2)
-        return torch.mean(loss_same + loss_diff)
-
-# ======================
 # TRAINING
 # ======================
 def train_model(train_loader, val_loader, epochs=50, lr=0.001, save_path='siamese_mobilenet_model.pth'):
@@ -300,6 +245,8 @@ def main():
     batch_size = 16
     epochs = 50
     learning_rate = 0.001
+    test_split = 0.1   # 10% cho test
+    val_split = 0.15   # 15% cho validation (từ phần còn lại sau khi tách test)
     
     # ========== LOAD DATASET ==========
     print("📂 Loading dataset...")
@@ -325,14 +272,37 @@ def main():
         print("❌ No images found! Please check your data directory.")
         return
     
-    # ========== SPLIT TRAIN/VAL ==========
-    train_paths, val_paths, train_labels, val_labels = train_test_split(
-        image_paths, labels, test_size=0.2, random_state=42, stratify=labels
+    # ========== SPLIT TRAIN/VAL/TEST ==========
+    # Bước 1: Tách test set trước
+    train_val_paths, test_paths, train_val_labels, test_labels = train_test_split(
+        image_paths, labels, 
+        test_size=test_split, 
+        random_state=42, 
+        stratify=labels
     )
     
-    print(f"\n📊 Split:")
-    print(f"   Training images: {len(train_paths)}")
-    print(f"   Validation images: {len(val_paths)}")
+    # Bước 2: Tách train và validation từ phần còn lại
+    val_size_adjusted = val_split / (1 - test_split)
+    train_paths, val_paths, train_labels, val_labels = train_test_split(
+        train_val_paths, train_val_labels,
+        test_size=val_size_adjusted,
+        random_state=42,
+        stratify=train_val_labels
+    )
+    
+    print(f"\n📊 Data Split:")
+    print(f"   Training images: {len(train_paths)} ({len(train_paths)/len(image_paths)*100:.1f}%)")
+    print(f"   Validation images: {len(val_paths)} ({len(val_paths)/len(image_paths)*100:.1f}%)")
+    print(f"   Test images: {len(test_paths)} ({len(test_paths)/len(image_paths)*100:.1f}%)")
+    
+    # ========== LƯU TEST SET ==========
+    print("\n💾 Saving test set information...")
+    with open('test_set_2d.txt', 'w', encoding='utf-8') as f:
+        f.write("TEST SET (2D MobileNet Model)\n")
+        f.write("="*60 + "\n")
+        for path, label in zip(test_paths, test_labels):
+            f.write(f"{path}\t{class_names[label]}\n")
+    print("✅ Test set saved to 'test_set_2d.txt'")
     
     # ========== CREATE DATASETS ==========
     print("\n🔄 Creating datasets...")
@@ -351,16 +321,20 @@ def main():
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=2)
     
     # ========== TRAIN ==========
-    print("\n🚀 Starting training with pretrained ResNet18...")
+    print("\n🚀 Starting training with pretrained MobileNetV2...")
     model = train_model(train_loader, val_loader, epochs=epochs, lr=learning_rate)
     
     print("\n✅ Training completed!")
-    print(f"✅ Model saved to 'siamese_resnet_model.pth'")
+    print(f"✅ Model saved to 'siamese_mobilenet_model.pth'")
+    print(f"✅ Test set saved to 'test_set_2d.txt'")
+    print(f"\n💡 Next steps:")
+    print(f"   1. Run test: python test_2d.py")
+    print(f"   2. Use model: python use_2d.py")
     print(f"\n💡 Ưu điểm của Transfer Learning:")
     print(f"   ✓ Học nhanh hơn với ít data")
-    print(f"   ✓ Pretrained weights từ ImageNet giúp extract features tốt hơn")
-    print(f"   ✓ Tránh overfitting khi data ít")
-    print(f"   ✓ Accuracy cao hơn so với train from scratch")
+    print(f"   ✓ Pretrained weights từ ImageNet")
+    print(f"   ✓ Tránh overfitting")
+    print(f"   ✓ Accuracy cao hơn")
 
 if __name__ == "__main__":
     main()

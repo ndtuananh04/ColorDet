@@ -1,0 +1,7 @@
+2D MOBILENET MODEL TEST RESULTS
+============================================================
+Accuracy: 100.00%
+Threshold: 0.5
+Total images: 273
+Model: MobileNetV2 (pretrained)
+Embedding dim: 128

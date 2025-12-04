@@ -2,3 +2,8 @@ data1: data ảnh phần roi
 
 cap_image: chụp data roi
 
+siam, siam 2: 1D chưa crop ảnh: data
+
+siam_only roi: siam model + model: 1D đã crop
+
+siam_mobilenet_model + siam_2d + model_2d : mobilenet 2D

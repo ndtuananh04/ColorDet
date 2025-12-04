@@ -4,58 +4,302 @@ from scipy.spatial.distance import cosine, euclidean
 from sklearn.metrics.pairwise import cosine_similarity
 
 # ======================
-# PHÁT HIỆN ĐẦU NỐI
+# ROI INTERACTIVE SELECTION
 # ======================
-def detect_metal_connectors(frame):
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-    edges = cv2.Canny(blurred, 50, 150)
+class ROISelector:
+    def __init__(self):
+        self.roi = None
+        self.dragging = False
+        self.start_point = None
+        self.current_image = None
+        self.display_image = None
+        
+    def mouse_callback(self, event, x, y, flags, param):
+        if event == cv2.EVENT_LBUTTONDOWN:
+            self.dragging = True
+            self.start_point = (x, y)
+            
+        elif event == cv2.EVENT_MOUSEMOVE:
+            if self.dragging:
+                self.display_image = self.current_image.copy()
+                cv2.rectangle(self.display_image, self.start_point, (x, y), (0, 255, 0), 2)
+                cv2.imshow('Select ROI', self.display_image)
+                
+        elif event == cv2.EVENT_LBUTTONUP:
+            self.dragging = False
+            x1, y1 = self.start_point
+            x2, y2 = x, y
+            
+            # Ensure x1 < x2 and y1 < y2
+            x1, x2 = min(x1, x2), max(x1, x2)
+            y1, y2 = min(y1, y2), max(y1, y2)
+            
+            if x2 - x1 > 10 and y2 - y1 > 10:
+                self.roi = (x1, y1, x2 - x1, y2 - y1)
+                self.display_image = self.current_image.copy()
+                cv2.rectangle(self.display_image, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                cv2.putText(self.display_image, "Press ENTER to confirm, 'r' to reset", 
+                           (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                cv2.imshow('Select ROI', self.display_image)
+    
+    def select_roi(self, image):
+        """
+        Interactive ROI selection
+        Returns: (x, y, w, h) or None
+        """
+        self.current_image = image.copy()
+        self.display_image = image.copy()
+        self.roi = None
+        
+        cv2.namedWindow('Select ROI')
+        cv2.setMouseCallback('Select ROI', self.mouse_callback)
+        
+        print("\n" + "="*60)
+        print("CHỌN VÙNG ROI:")
+        print("="*60)
+        print("- Kéo chuột để chọn vùng dây")
+        print("- Nhấn ENTER để xác nhận")
+        print("- Nhấn 'r' để chọn lại")
+        print("- Nhấn ESC để thoát")
+        print("="*60)
+        
+        cv2.imshow('Select ROI', self.display_image)
+        
+        while True:
+            key = cv2.waitKey(1) & 0xFF
+            
+            if key == 13:  # ENTER
+                if self.roi is not None:
+                    cv2.destroyWindow('Select ROI')
+                    return self.roi
+                    
+            elif key == ord('r'):  # Reset
+                self.roi = None
+                self.display_image = self.current_image.copy()
+                cv2.imshow('Select ROI', self.display_image)
+                
+            elif key == 27:  # ESC
+                cv2.destroyWindow('Select ROI')
+                return None
 
-    kernel = np.ones((3, 3), np.uint8)
-    dilated = cv2.dilate(edges, kernel, iterations=2)
-    eroded = cv2.erode(dilated, kernel, iterations=1)
+class ROIManager:
+    """Quản lý ROI với khả năng di chuyển và resize"""
+    def __init__(self, image, initial_roi=None):
+        self.image = image.copy()
+        self.display_image = image.copy()
+        self.roi = initial_roi  # (x, y, w, h)
+        self.dragging = False
+        self.resizing = False
+        self.drag_start = None
+        self.resize_corner = None
+        
+    def mouse_callback(self, event, x, y, flags, param):
+        if self.roi is None:
+            return
+            
+        rx, ry, rw, rh = self.roi
+        
+        # Check if near corners for resizing
+        corner_size = 10
+        corners = {
+            'tl': (rx, ry),
+            'tr': (rx + rw, ry),
+            'bl': (rx, ry + rh),
+            'br': (rx + rw, ry + rh)
+        }
+        
+        if event == cv2.EVENT_LBUTTONDOWN:
+            # Check resize corners first
+            for corner_name, (cx, cy) in corners.items():
+                if abs(x - cx) < corner_size and abs(y - cy) < corner_size:
+                    self.resizing = True
+                    self.resize_corner = corner_name
+                    self.drag_start = (x, y)
+                    return
+            
+            # Check if inside ROI for dragging
+            if rx <= x <= rx + rw and ry <= y <= ry + rh:
+                self.dragging = True
+                self.drag_start = (x - rx, y - ry)
+                
+        elif event == cv2.EVENT_MOUSEMOVE:
+            if self.resizing and self.drag_start is not None:
+                dx = x - self.drag_start[0]
+                dy = y - self.drag_start[1]
+                
+                if self.resize_corner == 'br':
+                    new_w = rw + dx
+                    new_h = rh + dy
+                    if new_w > 20 and new_h > 20:
+                        self.roi = (rx, ry, new_w, new_h)
+                        self.drag_start = (x, y)
+                        
+                elif self.resize_corner == 'tr':
+                    new_w = rw + dx
+                    new_y = ry + dy
+                    new_h = rh - dy
+                    if new_w > 20 and new_h > 20:
+                        self.roi = (rx, new_y, new_w, new_h)
+                        self.drag_start = (x, y)
+                        
+                elif self.resize_corner == 'bl':
+                    new_x = rx + dx
+                    new_w = rw - dx
+                    new_h = rh + dy
+                    if new_w > 20 and new_h > 20:
+                        self.roi = (new_x, ry, new_w, new_h)
+                        self.drag_start = (x, y)
+                        
+                elif self.resize_corner == 'tl':
+                    new_x = rx + dx
+                    new_y = ry + dy
+                    new_w = rw - dx
+                    new_h = rh - dy
+                    if new_w > 20 and new_h > 20:
+                        self.roi = (new_x, new_y, new_w, new_h)
+                        self.drag_start = (x, y)
+                
+                self.update_display()
+                
+            elif self.dragging and self.drag_start is not None:
+                new_x = x - self.drag_start[0]
+                new_y = y - self.drag_start[1]
+                
+                # Keep within image bounds
+                new_x = max(0, min(new_x, self.image.shape[1] - rw))
+                new_y = max(0, min(new_y, self.image.shape[0] - rh))
+                
+                self.roi = (new_x, new_y, rw, rh)
+                self.update_display()
+                
+        elif event == cv2.EVENT_LBUTTONUP:
+            self.dragging = False
+            self.resizing = False
+            self.drag_start = None
+            self.resize_corner = None
+    
+    def update_display(self):
+        if self.roi is None:
+            return
+            
+        self.display_image = self.image.copy()
+        x, y, w, h = self.roi
+        
+        # Draw ROI rectangle
+        cv2.rectangle(self.display_image, (x, y), (x + w, y + h), (0, 255, 0), 2)
+        
+        # Draw resize corners
+        corner_size = 8
+        corners = [
+            (x, y), (x + w, y), 
+            (x, y + h), (x + w, y + h)
+        ]
+        for cx, cy in corners:
+            cv2.circle(self.display_image, (cx, cy), corner_size, (0, 0, 255), -1)
+        
+        # Draw info
+        cv2.putText(self.display_image, f"ROI: {w}x{h}", (x, y - 10),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+        
+        cv2.imshow('Adjust ROI', self.display_image)
+    
+    def adjust_roi(self):
+        """
+        Adjust ROI with mouse
+        Returns: (x, y, w, h) or None
+        """
+        cv2.namedWindow('Adjust ROI')
+        cv2.setMouseCallback('Adjust ROI', self.mouse_callback)
+        
+        print("\n" + "="*60)
+        print("ĐIỀU CHỈNH ROI:")
+        print("="*60)
+        print("- Kéo vùng ROI để di chuyển")
+        print("- Kéo góc (đỏ) để thay đổi kích thước")
+        print("- Nhấn ENTER để xác nhận")
+        print("- Nhấn 'd' để xóa ROI và chọn lại")
+        print("- Nhấn ESC để thoát")
+        print("="*60)
+        
+        self.update_display()
+        
+        while True:
+            key = cv2.waitKey(1) & 0xFF
+            
+            if key == 13:  # ENTER
+                if self.roi is not None:
+                    cv2.destroyWindow('Adjust ROI')
+                    return self.roi
+                    
+            elif key == ord('d'):  # Delete and reselect
+                cv2.destroyWindow('Adjust ROI')
+                selector = ROISelector()
+                return selector.select_roi(self.image)
+                
+            elif key == 27:  # ESC
+                cv2.destroyWindow('Adjust ROI')
+                return None
 
-    contours, _ = cv2.findContours(eroded, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    metal_pins = []
+def select_or_input_roi(image, use_interactive=True):
+    """
+    Chọn ROI bằng cách interactive hoặc nhập tay
+    
+    Args:
+        image: ảnh input
+        use_interactive: True = dùng chuột, False = nhập tay
+    
+    Returns:
+        (x, y, w, h) hoặc None
+    """
+    if use_interactive:
+        selector = ROISelector()
+        return selector.select_roi(image)
+    else:
+        print("\nNhập kích thước ROI:")
+        try:
+            x = int(input("  x (left): "))
+            y = int(input("  y (top): "))
+            w = int(input("  width: "))
+            h = int(input("  height: "))
+            
+            # Validate
+            if x < 0 or y < 0 or w <= 0 or h <= 0:
+                print("❌ Giá trị không hợp lệ!")
+                return None
+            if x + w > image.shape[1] or y + h > image.shape[0]:
+                print("❌ ROI vượt quá kích thước ảnh!")
+                return None
+                
+            return (x, y, w, h)
+        except ValueError:
+            print("❌ Giá trị không hợp lệ!")
+            return None
 
-    for contour in contours:
-        area = cv2.contourArea(contour)
-        if 50 < area < 2000:
-            x, y, w, h = cv2.boundingRect(contour)
-            aspect_ratio = float(w) / h if h > 0 else 0
-            if 0.3 < aspect_ratio < 3.0:
-                metal_pins.append((x, y, w, h))
-
-    if len(metal_pins) == 0:
-        return None
-
-    all_x = [x for x, y, w, h in metal_pins]
-    all_y = [y for x, y, w, h in metal_pins]
-    all_x_max = [x + w for x, y, w, h in metal_pins]
-    all_y_max = [y + h for x, y, w, h in metal_pins]
-
-    min_x = min(all_x)
-    min_y = min(all_y)
-    max_x = max(all_x_max)
-    max_y = max(all_y_max)
-
-    extension = 80
-    min_x = max(0, min_x - extension)
-    max_x = min_x + 30
-    padding = 20
-    min_y = max(0, min_y - padding)
-    max_y = min(frame.shape[0], max_y + padding)
-
-    width = max_x - min_x
-    height = max_y - min_y
-
-    return (min_x, min_y, width, height), metal_pins
-
-def crop_wire_region(image):
-    result = detect_metal_connectors(image)
-    if result is None:
-        return None
-    (x, y, w, h), _ = result
+def crop_wire_region(image, roi=None, interactive=True):
+    """
+    Crop vùng dây theo ROI
+    
+    Args:
+        image: ảnh input
+        roi: (x, y, w, h) hoặc None để chọn mới
+        interactive: True = dùng chuột để chọn/điều chỉnh
+    
+    Returns:
+        cropped image hoặc None
+    """
+    if roi is None:
+        roi = select_or_input_roi(image, use_interactive=interactive)
+        if roi is None:
+            return None
+    else:
+        # Allow adjustment if interactive
+        if interactive:
+            manager = ROIManager(image, roi)
+            roi = manager.adjust_roi()
+            if roi is None:
+                return None
+    
+    x, y, w, h = roi
     cropped = image[y:y+h, x:x+w]
     return cropped
 
@@ -150,7 +394,9 @@ def compare_features(feat1, feat2, method='cosine'):
 def compare_two_images_simple(img1_path, img2_path, 
                                feature_method='hsv_histogram',
                                compare_method='cosine',
-                               threshold=0.85):
+                               threshold=0.85,
+                               roi1=None, roi2=None,
+                               interactive=True):
     """
     So sánh 2 ảnh connector đơn giản, không cần ML
     
@@ -158,6 +404,8 @@ def compare_two_images_simple(img1_path, img2_path,
         feature_method: 'hsv_histogram', 'mean_hsv', 'color_moments'
         compare_method: 'cosine', 'euclidean', 'correlation'
         threshold: ngưỡng quyết định (similarity > threshold → giống)
+        roi1, roi2: (x, y, w, h) hoặc None để chọn mới
+        interactive: True = dùng chuột, False = nhập tay
     """
     # Đọc ảnh
     img1 = cv2.imread(img1_path)
@@ -168,11 +416,18 @@ def compare_two_images_simple(img1_path, img2_path,
         return None
     
     # Crop vùng dây
-    crop1 = crop_wire_region(img1)
-    crop2 = crop_wire_region(img2)
+    print("\n--- ẢNH 1 ---")
+    crop1 = crop_wire_region(img1, roi1, interactive)
     
-    if crop1 is None or crop2 is None:
-        print("❌ Không phát hiện được vùng dây trong một trong hai ảnh")
+    if crop1 is None:
+        print("❌ Không có ROI cho ảnh 1")
+        return None
+    
+    print("\n--- ẢNH 2 ---")
+    crop2 = crop_wire_region(img2, roi2, interactive)
+    
+    if crop2 is None:
+        print("❌ Không có ROI cho ảnh 2")
         return None
     
     # Trích xuất đặc trưng
@@ -205,18 +460,6 @@ def compare_two_images_simple(img1_path, img2_path,
     display1 = img1.copy()
     display2 = img2.copy()
     
-    # Vẽ crop region
-    result1 = detect_metal_connectors(img1)
-    result2 = detect_metal_connectors(img2)
-    
-    if result1 is not None:
-        (x, y, w, h), _ = result1
-        cv2.rectangle(display1, (x, y), (x+w, y+h), (0, 255, 0), 2)
-    
-    if result2 is not None:
-        (x, y, w, h), _ = result2
-        cv2.rectangle(display2, (x, y), (x+w, y+h), (0, 255, 0), 2)
-    
     # Resize để hiển thị
     h1, w1 = display1.shape[:2]
     h2, w2 = display2.shape[:2]
@@ -244,15 +487,21 @@ def compare_two_images_simple(img1_path, img2_path,
 # ======================
 # TÌM THRESHOLD TỐI ƯU
 # ======================
-def find_optimal_threshold(data_dir, feature_method='hsv_histogram', compare_method='cosine'):
+def find_optimal_threshold(data_dir, feature_method='hsv_histogram', 
+                          compare_method='cosine', roi_dict=None, interactive=True):
     """
     Tìm threshold tối ưu từ dataset
     
     Args:
         data_dir: thư mục chứa data/type1, data/type2, ...
+        roi_dict: dictionary {image_path: (x, y, w, h)} hoặc None
+        interactive: True = chọn ROI bằng chuột nếu chưa có
     """
     import os
     from itertools import combinations
+    
+    if roi_dict is None:
+        roi_dict = {}
     
     # Load tất cả ảnh theo class
     classes = {}
@@ -280,8 +529,20 @@ def find_optimal_threshold(data_dir, feature_method='hsv_histogram', compare_met
     # Same class pairs
     for class_name, images in classes.items():
         for img1, img2 in combinations(images, 2):
-            crop1 = crop_wire_region(cv2.imread(img1))
-            crop2 = crop_wire_region(cv2.imread(img2))
+            # Get or select ROI
+            if img1 not in roi_dict:
+                print(f"\nChọn ROI cho: {img1}")
+                roi_dict[img1] = select_or_input_roi(cv2.imread(img1), interactive)
+            
+            if img2 not in roi_dict:
+                print(f"\nChọn ROI cho: {img2}")
+                roi_dict[img2] = select_or_input_roi(cv2.imread(img2), interactive)
+            
+            if roi_dict[img1] is None or roi_dict[img2] is None:
+                continue
+            
+            crop1 = crop_wire_region(cv2.imread(img1), roi_dict[img1], interactive=False)
+            crop2 = crop_wire_region(cv2.imread(img2), roi_dict[img2], interactive=False)
             
             if crop1 is not None and crop2 is not None:
                 feat1 = extract_color_features(crop1, method=feature_method)
@@ -299,8 +560,20 @@ def find_optimal_threshold(data_dir, feature_method='hsv_histogram', compare_met
             # Lấy 1 cặp từ mỗi pair of classes
             for img1 in images1[:3]:  # Chỉ lấy 3 ảnh đầu để nhanh
                 for img2 in images2[:3]:
-                    crop1 = crop_wire_region(cv2.imread(img1))
-                    crop2 = crop_wire_region(cv2.imread(img2))
+                    # Get or select ROI
+                    if img1 not in roi_dict:
+                        print(f"\nChọn ROI cho: {img1}")
+                        roi_dict[img1] = select_or_input_roi(cv2.imread(img1), interactive)
+                    
+                    if img2 not in roi_dict:
+                        print(f"\nChọn ROI cho: {img2}")
+                        roi_dict[img2] = select_or_input_roi(cv2.imread(img2), interactive)
+                    
+                    if roi_dict[img1] is None or roi_dict[img2] is None:
+                        continue
+                    
+                    crop1 = crop_wire_region(cv2.imread(img1), roi_dict[img1], interactive=False)
+                    crop2 = crop_wire_region(cv2.imread(img2), roi_dict[img2], interactive=False)
                     
                     if crop1 is not None and crop2 is not None:
                         feat1 = extract_color_features(crop1, method=feature_method)
@@ -367,7 +640,7 @@ def find_optimal_threshold(data_dir, feature_method='hsv_histogram', compare_met
     print("✅ Đã lưu biểu đồ: similarity_analysis.png")
     plt.close()
     
-    return optimal_threshold, accuracy
+    return optimal_threshold, accuracy, roi_dict
 
 # ======================
 # REAL-TIME
@@ -381,24 +654,26 @@ class SimpleReferenceChecker:
         self.threshold = threshold
         self.reference_feature = None
         self.reference_image = None
+        self.reference_roi = None
         self.is_set = False
     
-    def set_reference(self, image_path):
+    def set_reference(self, image_path, roi=None, interactive=True):
         img = cv2.imread(image_path)
         if img is None:
             return False, "Không thể đọc ảnh"
         
-        crop = crop_wire_region(img)
+        crop = crop_wire_region(img, roi, interactive)
         if crop is None:
-            return False, "Không phát hiện được vùng dây"
+            return False, "Không có ROI"
         
         self.reference_feature = extract_color_features(crop, method=self.feature_method)
         self.reference_image = img.copy()
+        self.reference_roi = roi
         self.is_set = True
         
         return True, "Đã lưu mẫu chuẩn"
     
-    def check(self, image_path):
+    def check(self, image_path, roi=None, interactive=True):
         if not self.is_set:
             return None, "Chưa có mẫu chuẩn"
         
@@ -406,9 +681,9 @@ class SimpleReferenceChecker:
         if img is None:
             return None, "Không thể đọc ảnh"
         
-        crop = crop_wire_region(img)
+        crop = crop_wire_region(img, roi, interactive)
         if crop is None:
-            return None, "Không phát hiện được vùng dây"
+            return None, "Không có ROI"
         
         feature = extract_color_features(crop, method=self.feature_method)
         similarity = compare_features(self.reference_feature, feature, 
@@ -424,7 +699,7 @@ def main():
     import sys
     
     print("\n" + "="*60)
-    print("SO SÁNH MÀU DÂY - KHÔNG CẦN ML")
+    print("SO SÁNH MÀU DÂY - KHÔNG CẦN ML (ROI VERSION)")
     print("="*60)
     print("1. So sánh 2 ảnh")
     print("2. Tìm threshold tối ưu từ dataset")
@@ -437,6 +712,8 @@ def main():
         print("\nSo sánh 2 ảnh")
         img1 = input("Đường dẫn ảnh 1: ").strip()
         img2 = input("Đường dẫn ảnh 2: ").strip()
+        
+        use_mouse = input("Dùng chuột chọn ROI? (y/n, mặc định y): ").strip().lower() != 'n'
         
         print("\nChọn feature method:")
         print("  1. hsv_histogram (chi tiết nhất, khuyến nghị)")
@@ -456,11 +733,14 @@ def main():
         
         threshold = float(input("Threshold (mặc định 0.85): ").strip() or "0.85")
         
-        compare_two_images_simple(img1, img2, feature_method, compare_method, threshold)
+        compare_two_images_simple(img1, img2, feature_method, compare_method, 
+                                 threshold, interactive=use_mouse)
     
     elif choice == "2":
         print("\nTìm threshold tối ưu")
         data_dir = input("Đường dẫn thư mục data: ").strip()
+        
+        use_mouse = input("Dùng chuột chọn ROI? (y/n, mặc định y): ").strip().lower() != 'n'
         
         print("\nChọn feature method:")
         print("  1. hsv_histogram")
@@ -478,7 +758,8 @@ def main():
         compare_methods = {'1': 'cosine', '2': 'euclidean', '3': 'correlation'}
         compare_method = compare_methods.get(comp_choice, 'cosine')
         
-        optimal_threshold, accuracy = find_optimal_threshold(data_dir, feature_method, compare_method)
+        optimal_threshold, accuracy, roi_dict = find_optimal_threshold(
+            data_dir, feature_method, compare_method, interactive=use_mouse)
         
         print(f"\n✅ Sử dụng threshold: {optimal_threshold:.4f}")
         print(f"✅ Accuracy ước tính: {accuracy:.2f}%")
@@ -487,14 +768,17 @@ def main():
         print("\nSo sánh với mẫu chuẩn")
         reference = input("Đường dẫn ảnh mẫu chuẩn: ").strip()
         test_img = input("Đường dẫn ảnh cần kiểm tra: ").strip()
+        
+        use_mouse = input("Dùng chuột chọn ROI? (y/n, mặc định y): ").strip().lower() != 'n'
+        
         threshold = float(input("Threshold (mặc định 0.85): ").strip() or "0.85")
         
         checker = SimpleReferenceChecker(threshold=threshold)
-        success, msg = checker.set_reference(reference)
+        success, msg = checker.set_reference(reference, interactive=use_mouse)
         
         if success:
             print(f"✅ {msg}")
-            similarity, is_match = checker.check(test_img)
+            similarity, is_match = checker.check(test_img, interactive=use_mouse)
             
             if similarity is not None:
                 print(f"\nSimilarity: {similarity:.4f}")

@@ -333,6 +333,72 @@ def compare_two_images(model, device, img1_path, img2_path, threshold=0.5):
     
     return distance, is_same
 
+def adjust_camera_exposure(cap):
+    """Điều chỉnh exposure của camera (giống cap_image.py)"""
+    print("\n⚙️  ĐIỀU CHỈNH EXPOSURE")
+    
+    # Set manual mode
+    cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 1)
+    
+    # Lấy exposure hiện tại
+    current_exp = int(cap.get(cv2.CAP_PROP_EXPOSURE))
+    
+    # Thử set range và đọc lại
+    cap.set(cv2.CAP_PROP_EXPOSURE, -6)
+    test_exp = int(cap.get(cv2.CAP_PROP_EXPOSURE))
+    
+    # Xác định range dựa trên camera
+    if test_exp < 0:
+        min_exp, max_exp = -13, -1  # Camera hỗ trợ âm
+    else:
+        min_exp, max_exp = 1, 2000  # Camera dùng giá trị dương
+        if current_exp == 0:
+            current_exp = 100
+    
+    cap.set(cv2.CAP_PROP_EXPOSURE, current_exp)
+    
+    window = 'Adjust Exposure'
+    cv2.namedWindow(window)
+    
+    def on_change(val):
+        # Chuyển đổi từ 0-100 sang min_exp-max_exp
+        exp = int(min_exp + (val / 100.0) * (max_exp - min_exp))
+        cap.set(cv2.CAP_PROP_EXPOSURE, exp)
+    
+    # Trackbar từ 0-100% 
+    initial_val = int(((current_exp - min_exp) / (max_exp - min_exp)) * 100)
+    cv2.createTrackbar('Exposure (%)', window, initial_val, 100, on_change)
+    
+    print("📍 Di chuyển trackbar | ENTER: Xác nhận | ESC: Hủy")
+    
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+        
+        exp = int(cap.get(cv2.CAP_PROP_EXPOSURE))
+        display = frame.copy()
+        
+        cv2.putText(display, f"Exposure: {exp}", (20, 50),
+                   cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 3)
+        cv2.putText(display, f"Range: {min_exp} to {max_exp}", (20, 90),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+        cv2.putText(display, "ENTER: Confirm | ESC: Cancel", (20, 130),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+        
+        cv2.imshow(window, display)
+        
+        key = cv2.waitKey(1) & 0xFF
+        if key == 13:  # ENTER
+            print(f"✅ Exposure đã đặt: {exp}")
+            break
+        elif key == 27:  # ESC
+            cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 3)
+            print("⚠️ Đã hủy - Chuyển về Auto exposure")
+            break
+    
+    cv2.destroyWindow(window)
+
 # ======================
 # REAL-TIME CAMERA WITH ROI
 # ======================
@@ -363,6 +429,7 @@ def run_realtime_camera(model, device, reference_path, threshold=0.3, roi_width=
     print("Controls:")
     print("  'q' - Quit")
     print("  's' - Save current ROI frame")
+    print("  'e' - Adjust exposure")  # ← THÊM MỚI
     print("  '+' - Increase threshold by 0.05")
     print("  '-' - Decrease threshold by 0.05")
     print("  Drag ROI - Move ROI position")
@@ -389,6 +456,13 @@ def run_realtime_camera(model, device, reference_path, threshold=0.3, roi_width=
         print(f"❌ ROI ({roi_width}x{roi_height}) lớn hơn frame ({frame_width}x{frame_height})!")
         cap.release()
         return
+    
+    # ============ HỎI ĐIỀU CHỈNH EXPOSURE ============
+    print("\n📸 Bạn có muốn điều chỉnh exposure trước khi bắt đầu không?")
+    adjust_choice = input("   (y/n) [n]: ").strip().lower()
+    if adjust_choice == 'y':
+        adjust_camera_exposure(cap)
+    # ================================================
     
     # Setup ROI selector
     roi_selector = ROISelectorRealtime(roi_width=roi_width, roi_height=roi_height)
@@ -517,7 +591,7 @@ def run_realtime_camera(model, device, reference_path, threshold=0.3, roi_width=
         
         # Controls help (góc dưới trái)
         help_y = display.shape[0] - 70
-        cv2.putText(display, "Drag ROI to move | q: Quit | s: Save | +/-: Threshold", 
+        cv2.putText(display, "Drag ROI | q:Quit | s:Save | e:Exposure | +/-:Threshold",  # ← CẬP NHẬT
                    (20, help_y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
         
         cv2.imshow(window_name, display)
@@ -536,6 +610,12 @@ def run_realtime_camera(model, device, reference_path, threshold=0.3, roi_width=
                 print(f"✅ Saved ROI: {filename}")
             except:
                 print(f"❌ Cannot save ROI!")
+        
+        elif key == ord('e'):  # ← THÊM MỚI
+            # Điều chỉnh exposure
+            print("\n📸 Điều chỉnh exposure...")
+            adjust_camera_exposure(cap)
+            print("✅ Tiếp tục detection...\n")
         
         elif key == ord('+') or key == ord('='):
             threshold += 0.05

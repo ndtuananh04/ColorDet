@@ -8,7 +8,7 @@ from torch.utils.data import Dataset, DataLoader
 import os
 import random
 from sklearn.model_selection import train_test_split
-
+from model import Siamese1DNet, ContrastiveLoss
 # ======================
 # DATA AUGMENTATION
 # ======================
@@ -20,26 +20,13 @@ def augment_image(img):
     if random.random() > 0.5:
         ksize = random.choice([3, 5])
         augmented = cv2.GaussianBlur(augmented, (ksize, ksize), 0)
-    
-    # Random brightness
-    if random.random() > 0.5:
-        factor = random.uniform(0.8, 1.2)
-        augmented = np.clip(augmented * factor, 0, 255).astype(np.uint8)
-    
+
     # Random shift (dịch chuyển nhỏ)
     if random.random() > 0.5:
         shift_x = random.randint(-5, 5)
         shift_y = random.randint(-5, 5)
         M = np.float32([[1, 0, shift_x], [0, 1, shift_y]])
         augmented = cv2.warpAffine(augmented, M, (augmented.shape[1], augmented.shape[0]))
-    
-    # Random rotation (góc nhỏ)
-    if random.random() > 0.5:
-        angle = random.uniform(-5, 5)
-        h, w = augmented.shape[:2]
-        M = cv2.getRotationMatrix2D((w/2, h/2), angle, 1.0)
-        augmented = cv2.warpAffine(augmented, M, (w, h))
-    
     return augmented
 
 def preprocess_for_1dcnn(img, target_length=200, augment=True):
@@ -153,73 +140,6 @@ def create_pairs_from_batch(batch_data, batch_labels):
     return torch.stack(pairs_1), torch.stack(pairs_2), torch.tensor(labels).float()
 
 # ======================
-# SIAMESE NETWORK
-# ======================
-class Siamese1DNet(nn.Module):
-    def __init__(self):
-        super().__init__()
-        # Shared CNN để extract features
-        self.conv = nn.Sequential(
-            # Layer 1
-            nn.Conv1d(3, 32, kernel_size=5, padding=2),
-            nn.BatchNorm1d(32),
-            nn.ReLU(),
-            nn.MaxPool1d(2),
-            nn.Dropout(0.2),
-
-            # Layer 2
-            nn.Conv1d(32, 64, kernel_size=5, padding=2),
-            nn.BatchNorm1d(64),
-            nn.ReLU(),
-            nn.MaxPool1d(2),
-            nn.Dropout(0.2),
-
-            # Layer 3
-            nn.Conv1d(64, 128, kernel_size=5, padding=2),
-            nn.BatchNorm1d(128),
-            nn.ReLU(),
-            nn.AdaptiveAvgPool1d(8),
-            
-            # Fully connected
-            nn.Flatten(),
-            nn.Linear(128 * 8, 256),
-            nn.ReLU(),
-            nn.Dropout(0.3),
-            nn.Linear(256, 128),  # Embedding dimension = 128
-        )
-
-    def forward_once(self, x):
-        """Extract embedding từ một ảnh"""
-        return self.conv(x)
-
-    def forward(self, x1, x2):
-        """Tính khoảng cách giữa 2 ảnh"""
-        e1 = self.forward_once(x1)
-        e2 = self.forward_once(x2)
-        return F.pairwise_distance(e1, e2)
-
-# ======================
-# CONTRASTIVE LOSS
-# ======================
-class ContrastiveLoss(nn.Module):
-    def __init__(self, margin=1.0):
-        super().__init__()
-        self.margin = margin
-    
-    def forward(self, distances, labels):
-        """
-        distances: khoảng cách giữa các cặp
-        labels: 0 = same, 1 = different
-        """
-        # Loss cho cặp cùng class: muốn distance nhỏ
-        loss_same = (1 - labels) * torch.pow(distances, 2)
-        
-        # Loss cho cặp khác class: muốn distance > margin
-        loss_diff = labels * torch.pow(torch.clamp(self.margin - distances, min=0.0), 2)
-        
-        return torch.mean(loss_same + loss_diff)
-
-# ======================
 # TRAINING
 # ======================
 def train_model(train_loader, val_loader, epochs=50, lr=0.001, save_path='siamese_model.pth'):
@@ -314,14 +234,13 @@ def train_model(train_loader, val_loader, epochs=50, lr=0.001, save_path='siames
 # MAIN
 # ======================
 def main():
-
-    
     # ========== CẤU HÌNH ==========
-    data_dir = "data2"  # Thay đổi đường dẫn của bạn
-    batch_size = 16
-    epochs = 40
-    learning_rate = 0.001
-    aug_per_image = 10  # Số lần augment mỗi ảnh trong training
+    data_dir = "chamber"  # Thay đổi đường dẫn của bạn
+    batch_size = 32
+    epochs = 50
+    learning_rate = 0.0008
+    test_split = 0.1  # 10% cho test
+    val_split = 0.15  # 15% cho validation
     
     # ========== LOAD DATASET ==========
     print("📂 Loading dataset...")
@@ -347,14 +266,37 @@ def main():
         print("❌ No images found! Please check your data directory.")
         return
     
-    # ========== SPLIT TRAIN/VAL ==========
-    train_paths, val_paths, train_labels, val_labels = train_test_split(
-        image_paths, labels, test_size=0.2, random_state=42, stratify=labels
+    # ========== SPLIT TRAIN/VAL/TEST ==========
+    # Bước 1: Tách test set trước
+    train_val_paths, test_paths, train_val_labels, test_labels = train_test_split(
+        image_paths, labels, 
+        test_size=test_split, 
+        random_state=42, 
+        stratify=labels
     )
     
-    print(f"\n📊 Split:")
-    print(f"   Training images: {len(train_paths)}")
-    print(f"   Validation images: {len(val_paths)}")
+    # Bước 2: Tách train và validation từ phần còn lại
+    val_size_adjusted = val_split / (1 - test_split)  # Điều chỉnh tỷ lệ
+    train_paths, val_paths, train_labels, val_labels = train_test_split(
+        train_val_paths, train_val_labels,
+        test_size=val_size_adjusted,
+        random_state=42,
+        stratify=train_val_labels
+    )
+    
+    print(f"\n📊 Data Split:")
+    print(f"   Training images: {len(train_paths)} ({len(train_paths)/len(image_paths)*100:.1f}%)")
+    print(f"   Validation images: {len(val_paths)} ({len(val_paths)/len(image_paths)*100:.1f}%)")
+    print(f"   Test images: {len(test_paths)} ({len(test_paths)/len(image_paths)*100:.1f}%)")
+    
+    # ========== LƯU TEST SET ==========
+    print("\n💾 Saving test set information...")
+    with open('test_set.txt', 'w', encoding='utf-8') as f:
+        f.write("TEST SET\n")
+        f.write("="*60 + "\n")
+        for path, label in zip(test_paths, test_labels):
+            f.write(f"{path}\t{class_names[label]}\n")
+    print("✅ Test set saved to 'test_set.txt'")
     
     # ========== CREATE DATASETS ==========
     print("\n🔄 Creating datasets...")
@@ -376,11 +318,10 @@ def main():
     
     print("\n✅ Training completed!")
     print(f"✅ Model saved to 'siamese_model.pth'")
-    print(f"\n💡 Để sử dụng model:")
-    print(f"   1. Load model: model.load_state_dict(torch.load('siamese_model.pth')['model_state_dict'])")
-    print(f"   2. Preprocess ảnh: preprocess_for_1dcnn(image)")
-    print(f"   3. So sánh: distance = model(img1, img2)")
-    print(f"   4. Threshold: distance < 0.5 => same class")
+    print(f"✅ Test set saved to 'test_set.txt'")
+    print(f"\n💡 Next steps:")
+    print(f"   1. Run test: python test.py")
+    print(f"   2. Use model: python use.py")
 
 if __name__ == "__main__":
     main()
